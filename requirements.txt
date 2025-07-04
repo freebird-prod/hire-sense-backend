@@ -1,0 +1,8 @@
+Flask
+Flask-Cors
+pdfplumber
+psycopg2-binary
+python-dotenv
+google-generativeai
+requests
+#pip install -r requirements.txt
