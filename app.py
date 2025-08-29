@@ -37,68 +37,80 @@ def extract_email(text):
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)
     return email_match.group(0) if email_match else ""
 
-# Helper function to extract all potential skills using NLP
-def extract_all_skills(text):
-    doc = nlp(text.lower())
-    
-    # Heuristics to find skills: Proper nouns, technical terms
-    skills = set()
-    for token in doc:
-        # Simple heuristic: Check for proper nouns that are not names
-        # and look for specific technical keywords.
-        if token.pos_ in ("PROPN", "NOUN") and len(token.text) > 2:
-            # Filter out common non-skill words (can be expanded)
-            if token.text.lower() not in {"and", "with", "experience", "developed", "using", "management"}:
-                skills.add(token.text.lower().strip())
+# Helper function to extract skills ONLY from the skills section
+def extract_skills_from_section(text):
+    text_lower = text.lower()
+    skills_section = ""
+    # Define keywords that mark the start and end of the skills section
+    start_keywords = ["skills", "technical skills", "technologies", "core competencies", "competencies"]
+    end_keywords = ["experience", "projects", "education", "awards", "certifications", "profile", "summary"]
 
-    # A more sophisticated approach could involve looking for a "Skills" section
-    # and extracting words/phrases from there. This is a basic demonstration.
-    text_lines = text.split('\n')
-    skills_found = False
-    for line in text_lines:
-        lower_line = line.lower().strip()
-        if "skills" in lower_line or "technologies" in lower_line:
-            skills_found = True
-            continue
-        if skills_found and line.strip() and not re.search(r'\d{4}', line):
-            # Extract words separated by commas, bullets, etc.
-            line_skills = re.split(r'[,•\-;]', lower_line)
-            for skill in line_skills:
-                skill_clean = skill.strip()
-                if skill_clean and len(skill_clean) > 2:
-                    skills.add(skill_clean)
-            if re.search(r'experience|education', lower_line):
-                # Stop when a new section starts
-                skills_found = False
+    # Use a regex pattern to find the start of the skills section
+    # The pattern looks for a line containing one of the start keywords, followed by any content.
+    section_start_regex = r"^(?:" + "|".join(start_keywords) + r")\b.*"
     
-    # A final refinement step to remove single-letter or irrelevant entries
-    final_skills = {skill for skill in skills if len(skill) > 2 and not skill.isdigit() and not any(char.isdigit() for char in skill)}
-    
+    # Use a regex pattern to find the end of the skills section
+    # The pattern looks for a line containing one of the end keywords, optionally at the start of a line.
+    section_end_regex = r"^(?:" + "|".join(end_keywords) + r")\b.*"
+
+    # Find the starting position of the skills section
+    skills_section_start = re.search(section_start_regex, text_lower, re.MULTILINE)
+
+    if skills_section_start:
+        # Get the text from the starting match
+        skills_section_start_index = skills_section_start.start()
+        remaining_text = text_lower[skills_section_start_index:]
+        
+        # Find the ending position of the skills section
+        skills_section_end = re.search(section_end_regex, remaining_text, re.MULTILINE)
+        
+        if skills_section_end:
+            # Capture the text between the start and end markers
+            skills_section = remaining_text[:skills_section_end.start()]
+        else:
+            # If no end marker is found, assume the skills section runs to the end of the document.
+            skills_section = remaining_text
+
+    # Now, extract individual skills from the isolated section.
+    # This part of the logic remains similar to the previous version but works on the specific section.
+    doc = nlp(skills_section)
+    all_skills = set()
+    for token in doc:
+        # Capture proper nouns, which are often skills
+        if token.pos_ == "PROPN" and len(token.text) > 2:
+            all_skills.add(token.text.strip())
+
+    # Split lines by common separators like commas, semicolons, and bullets
+    lines = skills_section.split('\n')
+    for line in lines:
+        line_skills = re.split(r'[,•\-;]', line.strip())
+        for skill in line_skills:
+            clean_skill = skill.strip()
+            if clean_skill and len(clean_skill) > 2:
+                all_skills.add(clean_skill)
+
+    # Clean up and return the final list
+    final_skills = {skill for skill in all_skills if not skill.isdigit() and not re.search(r'\d', skill)}
     return list(final_skills)
 
-# Helper function to extract work experience
+# Helper function to extract work experience (as in previous code)
 def extract_experience(text):
-    # Regex to find work experience sections, typically containing years
-    # and job titles. This is a basic heuristic.
     experience_section = ""
     in_experience_section = False
     lines = text.split('\n')
     
     for line in lines:
         lower_line = line.lower()
-        # Look for keywords like 'experience', 'employment', 'work history'
         if any(keyword in lower_line for keyword in ["experience", "employment", "work history"]):
             in_experience_section = True
             continue
         
-        # Stop at new sections like 'education' or 'projects'
         if in_experience_section and any(keyword in lower_line for keyword in ["education", "projects", "certifications"]):
             in_experience_section = False
             break
             
         if in_experience_section:
-            # Capture relevant lines within the section
-            if line.strip(): # Add non-empty lines
+            if line.strip():
                 experience_section += line + "\n"
                 
     return experience_section.strip()
@@ -121,7 +133,7 @@ def extract_data_from_pdf():
 
         name = extract_name(text)
         email = extract_email(text)
-        skills = extract_all_skills(text)
+        skills = extract_skills_from_section(text)
         experience = extract_experience(text)
 
         return jsonify({
