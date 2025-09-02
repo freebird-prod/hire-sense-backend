@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import io
 import re
+import os
 from pdfminer.high_level import extract_text as pdfminer_extract_text
 import spacy
 
@@ -14,9 +15,13 @@ try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
     print("Downloading spaCy model 'en_core_web_sm'...")
-    from spacy.cli import download
-    download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+    try:
+        from spacy.cli import download
+        download("en_core_web_sm")
+        nlp = spacy.load("en_core_web_sm")
+    except Exception as e:
+        print(f"Failed to download spaCy model: {e}")
+        raise
 
 # Helper function to extract text from PDF using pdfminer.six
 def extract_text_from_pdf(pdf_file_path):
@@ -115,6 +120,17 @@ def extract_experience(text):
                 
     return experience_section.strip()
 
+@app.route('/', methods=['GET'])
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "message": "Hire Sense Backend API is running",
+        "endpoints": {
+            "extract_skills": "/extract_skills (POST)"
+        }
+    })
+
+
 @app.route('/extract_skills', methods=['POST'])
 def extract_data_from_pdf():
     if 'pdf_file' not in request.files:
@@ -148,5 +164,7 @@ def extract_data_from_pdf():
         return jsonify({"error": f"Failed to process PDF: {str(e)}", "success": False}), 500
 
 if __name__ == '__main__':
-    print("Server running on http://localhost:5000")
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_ENV') != 'production'
+    print(f"Server running on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
