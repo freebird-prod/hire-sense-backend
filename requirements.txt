@@ -1,6 +1,5 @@
 Flask
 Flask-Cors
-pdfplumber
-gunicorn
+pdfminer.six
+spacy
 requests
-#pip install -r requirements.txt
