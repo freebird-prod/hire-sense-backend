@@ -3,8 +3,7 @@ from flask_cors import CORS
 import io
 import re
 import os
-import pdfplumber                      # <-- NEW IMPORT
-import spacy
+import pdfplumber
 
 # -------------------------------------------------
 # Flask setup
@@ -12,34 +11,17 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------------------------------------
-# Load the spaCy model (download if missing)
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    print("Downloading spaCy model 'en_core_web_sm'...")
-    try:
-        from spacy.cli import download
-        download("en_core_web_sm")
-        nlp = spacy.load("en_core_web_sm")
-    except Exception as e:
-        print(f"Failed to download spaCy model: {e}")
-        raise
-
-# -------------------------------------------------
 # Helper: extract raw text from a PDF using pdfplumber
 def extract_text_from_pdf(pdf_file):
     """
     Reads the uploaded PDF file (a werkzeug FileStorage object),
-    extracts the textual content page‑by‑page with pdfplumber,
+    extracts the textual content page-by-page with pdfplumber,
     and returns a single string.
     """
-    # pdf_file.read() would consume the stream – we use BytesIO to keep it in memory.
     with io.BytesIO(pdf_file.read()) as pdf_bytes:
         all_text = []
-        # pdfplumber automatically closes the file when we exit the with‑block.
         with pdfplumber.open(pdf_bytes) as pdf:
             for page in pdf.pages:
-                # page.extract_text() can return None for blank pages
                 txt = page.extract_text()
                 if txt:
                     all_text.append(txt)
@@ -47,30 +29,34 @@ def extract_text_from_pdf(pdf_file):
 
 
 # -------------------------------------------------
-# Helper: extract candidate name (first PERSON entity)
+# Helper: extract candidate name (first line heuristic)
 def extract_name(text):
-    doc = nlp(text)
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            return ent.text.strip()
+    lines = text.split("\n")
+    for line in lines[:5]:  # Look only at top few lines
+        clean = line.strip()
+        if clean and not any(
+            kw in clean.lower() for kw in ["resume", "curriculum", "profile", "summary"]
+        ):
+            # Name heuristic: usually 2–3 words, letters only
+            if 1 < len(clean.split()) <= 4:
+                return clean
     return ""
 
 
 # -------------------------------------------------
-# Helper: extract e‑mail address using a simple regex
+# Helper: extract e-mail address using regex
 def extract_email(text):
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)
     return email_match.group(0) if email_match else ""
 
 
 # -------------------------------------------------
-# Helper: extract only the *Skills* section
+# Helper: extract *Skills* section (regex + delimiters)
 def extract_skills_from_section(text):
     text_lower = text.lower()
     skills_section = ""
 
-    # -----------------------------------------------------------------
-    # 1️⃣  Locate the start of the skills block
+    # Section markers
     start_keywords = [
         "skills", "technical skills", "technologies",
         "core competencies", "competencies"
@@ -80,7 +66,6 @@ def extract_skills_from_section(text):
         "certifications", "profile", "summary"
     ]
 
-    # Build regexes that match a whole line containing any of the keywords
     section_start_regex = r"^(?:" + "|".join(start_keywords) + r")\b.*"
     section_end_regex   = r"^(?:" + "|".join(end_keywords) + r")\b.*"
 
@@ -90,47 +75,28 @@ def extract_skills_from_section(text):
         start_idx = skills_section_start.start()
         remaining = text_lower[start_idx:]
 
-        # -----------------------------------------------------------------
-        # 2️⃣  Locate the end marker inside the remaining text
         skills_section_end = re.search(section_end_regex, remaining, re.MULTILINE)
 
         if skills_section_end:
             skills_section = remaining[:skills_section_end.start()]
         else:
-            # No explicit end – take everything till the document end
             skills_section = remaining
 
-    # -----------------------------------------------------------------
-    # 3️⃣  Pull out individual skill tokens from the isolated block
-    doc = nlp(skills_section)
+    # Split by lines and common separators
     all_skills = set()
-
-    # a) Proper nouns (many skill names are capitalised nouns)
-    for token in doc:
-        if token.pos_ == "PROPN" and len(token.text) > 2:
-            all_skills.add(token.text.strip())
-
-    # b) Split lines by common delimiters (commas, semicolons, bullets, dashes)
     lines = skills_section.split("\n")
     for line in lines:
-        line_skills = re.split(r"[,•\-;]", line.strip())
-        for skill in line_skills:
+        parts = re.split(r"[,•;|\-]", line.strip())
+        for skill in parts:
             clean = skill.strip()
-            if clean and len(clean) > 2:
+            if clean and len(clean) > 1 and not re.search(r"\d", clean):
                 all_skills.add(clean)
 
-    # -----------------------------------------------------------------
-    # 4️⃣  final cleanup – drop pure numbers or tokens containing digits
-    final_skills = {
-        skill for skill in all_skills
-        if not skill.isdigit() and not re.search(r"\d", skill)
-    }
-
-    return list(final_skills)
+    return list(all_skills)
 
 
 # -------------------------------------------------
-# Helper: extract the *Experience* block (same logic as before)
+# Helper: extract *Experience* block
 def extract_experience(text):
     experience_section = ""
     in_experience_section = False
@@ -155,20 +121,20 @@ def extract_experience(text):
 
 
 # -------------------------------------------------
-# Health‑check endpoint
+# Health-check endpoint
 @app.route("/", methods=["GET"])
 def health_check():
     return jsonify(
         {
             "status": "healthy",
-            "message": "Hire Sense Backend API is running",
+            "message": "Hire Sense Backend API is running (pdfplumber only, no spaCy)",
             "endpoints": {"extract_skills": "/extract_skills (POST)"},
         }
     )
 
 
 # -------------------------------------------------
-# Main extraction endpoint (unchanged URL / behaviour)
+# Main extraction endpoint
 @app.route("/extract_skills", methods=["POST"])
 def extract_data_from_pdf():
     if "pdf_file" not in request.files:
@@ -183,26 +149,20 @@ def extract_data_from_pdf():
         ), 400
 
     try:
-        # ----------- 1️⃣  Extract raw text -----------------
+        # 1️⃣ Extract text
         text = extract_text_from_pdf(pdf_file)
         if not text:
-            return (
-                jsonify(
-                    {
-                        "error": "Failed to extract text from PDF.",
-                        "success": False,
-                    }
-                ),
-                400,
-            )
+            return jsonify(
+                {"error": "Failed to extract text from PDF.", "success": False}
+            ), 400
 
-        # ----------- 2️⃣  Pull out the individual fields ----
+        # 2️⃣ Parse fields
         name = extract_name(text)
         email = extract_email(text)
         skills = extract_skills_from_section(text)
         experience = extract_experience(text)
 
-        # ----------- 3️⃣  Return JSON response ------------
+        # 3️⃣ Return JSON
         return jsonify(
             {
                 "success": True,
@@ -214,12 +174,9 @@ def extract_data_from_pdf():
         )
 
     except Exception as e:
-        return (
-            jsonify(
-                {"error": f"Failed to process PDF: {str(e)}", "success": False}
-            ),
-            500,
-        )
+        return jsonify(
+            {"error": f"Failed to process PDF: {str(e)}", "success": False}
+        ), 500
 
 
 # -------------------------------------------------
