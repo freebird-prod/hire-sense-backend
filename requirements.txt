@@ -1,7 +1,4 @@
 Flask==3.0.0
 Flask-Cors==4.0.0
-pdfplumber==0.11.0          # <-- replaces pdfminer.six
-spacy==3.7.2
+pdfplumber==0.11.0
 requests==2.31.0
-gunicorn==21.2.0
-https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
