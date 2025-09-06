@@ -1,6 +1,6 @@
 Flask==3.0.0
 Flask-Cors==4.0.0
-pdfminer.six==20231228
+pdfplumber==0.11.0          # <-- replaces pdfminer.six
 spacy==3.7.2
 requests==2.31.0
 gunicorn==21.2.0
